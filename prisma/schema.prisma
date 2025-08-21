@@ -1,0 +1,137 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
+
+enum UserRole {
+  CLIENT
+  PRO
+}
+
+enum BookingStatus {
+  REQUESTED
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum PricingType {
+  FIXED
+  HOURLY
+  BUDGET
+}
+
+model User {
+  id         String   @id @default(uuid())
+  role       UserRole
+  name       String
+  phone      String?  @unique
+  email      String?  @unique
+  avatarUrl  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  professionalProfile ProfessionalProfile?
+  bookingsClient      Booking[]           @relation("BookingClient")
+  bookingsPro         Booking[]           @relation("BookingPro")
+  reviewsFrom         Review[]            @relation("ReviewFrom")
+  reviewsTo           Review[]            @relation("ReviewTo")
+}
+
+model ProfessionalProfile {
+  id          String   @id @default(uuid())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String   @unique
+  bio         String?
+  radiusKm    Int      @default(5)
+  latitude    Decimal? @db.Decimal(9,6)
+  longitude   Decimal? @db.Decimal(9,6)
+  city        String?
+  state       String?
+  street      String?
+  number      String?
+  district    String?
+  postalcode  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  services    Service[]
+  categories  Category[] @relation("ProfessionalCategories")
+}
+
+model Category {
+  id     String   @id @default(uuid())
+  name   String   @unique
+  parent Category? @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  parentId String?
+  children Category[] @relation("CategoryHierarchy")
+
+  services Service[]
+  professionals ProfessionalProfile[] @relation("ProfessionalCategories")
+}
+
+model Service {
+  id             String   @id @default(uuid())
+  professional   ProfessionalProfile @relation(fields: [professionalId], references: [id])
+  professionalId String
+  title          String
+  description    String
+  pricingType    PricingType @default(BUDGET)
+  price          Decimal?    @db.Decimal(10,2)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  category   Category? @relation(fields: [categoryId], references: [id])
+  categoryId String?
+  images     ServiceImage[]
+  bookings   Booking[]
+  reviews    Review[]
+}
+
+model ServiceImage {
+  id        String  @id @default(uuid())
+  service   Service @relation(fields: [serviceId], references: [id])
+  serviceId String
+  url       String
+}
+
+model Booking {
+  id          String   @id @default(uuid())
+  client      User     @relation("BookingClient", fields: [clientId], references: [id])
+  clientId    String
+  professional User    @relation("BookingPro", fields: [professionalId], references: [id])
+  professionalId String
+  service      Service  @relation(fields: [serviceId], references: [id])
+  serviceId    String
+  status       BookingStatus @default(REQUESTED)
+  scheduledAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Local de execução (apenas lat/lng por compatibilidade com clients)
+  latitude   Decimal? @db.Decimal(9,6)
+  longitude  Decimal? @db.Decimal(9,6)
+  address    String?
+}
+
+model Review {
+  id        String   @id @default(uuid())
+  service   Service  @relation(fields: [serviceId], references: [id])
+  serviceId String
+  fromUser  User     @relation("ReviewFrom", fields: [fromUserId], references: [id])
+  fromUserId String
+  toUser    User     @relation("ReviewTo", fields: [toUserId], references: [id])
+  toUserId  String
+  rating    Int
+  comment   String
+  createdAt DateTime @default(now())
+}
+
+

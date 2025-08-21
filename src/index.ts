@@ -4,10 +4,13 @@ import cors from 'cors';
 import professionalsRouter from './routes/professionals';
 import servicesRouter from './routes/services';
 import reviewsRouter from './routes/reviews';
+import { PrismaClient } from '@prisma/client';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+export const prisma = new PrismaClient();
 
 app.get('/', (_req, res) => {
   res.json({ ok: true, service: 'iUork API' });

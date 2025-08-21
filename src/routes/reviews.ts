@@ -1,14 +1,29 @@
 import { Router } from 'express';
-import { reviews } from '../data/mock';
+import { prisma } from '../index';
 
 const router = Router();
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { serviceId } = req.query as { serviceId?: string };
-  if (serviceId) {
-    return res.json(reviews.filter((r) => r.serviceId === serviceId));
-  }
-  return res.json(reviews);
+  const data = await prisma.review.findMany({
+    where: { serviceId: serviceId || undefined },
+    include: { fromUser: true },
+  });
+  return res.json(
+    data.map((r) => ({
+      id: r.id,
+      serviceId: r.serviceId,
+      professionalId: r.toUserId,
+      rating: r.rating,
+      description: r.comment,
+      client: {
+        id: r.fromUserId,
+        name: r.fromUser.name,
+        image: r.fromUser.avatarUrl ?? '',
+      },
+      createdAt: r.createdAt.toISOString(),
+    })),
+  );
 });
 
 export default router;
