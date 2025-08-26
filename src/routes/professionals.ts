@@ -5,6 +5,10 @@ const router = Router();
 
 router.get('/', async (_req, res) => {
   const data = await prisma.professionalProfile.findMany({
+    where: {
+      latitude: { not: null },
+      longitude: { not: null },
+    },
     include: {
       user: true,
       services: {
@@ -18,17 +22,19 @@ router.get('/', async (_req, res) => {
     name: p.user.name,
     profession: p.categories?.[0]?.name ?? 'Profissional',
     description: p.bio ?? '',
-    address: {
-      latitude: Number(p.latitude ?? 0),
-      longitude: Number(p.longitude ?? 0),
-      street: p.street ?? '',
-      number: Number(p.number ?? 0),
-      district: p.district ?? '',
-      city: p.city ?? '',
-      state: p.state ?? '',
-      postalcode: p.postalcode ?? '',
-      distanceInMeters: null,
-    },
+    address: p.latitude != null && p.longitude != null
+      ? {
+          latitude: Number(p.latitude),
+          longitude: Number(p.longitude),
+          street: p.street ?? '',
+          number: Number(p.number ?? 0),
+          district: p.district ?? '',
+          city: p.city ?? '',
+          state: p.state ?? '',
+          postalcode: p.postalcode ?? '',
+          distanceInMeters: null,
+        }
+      : null,
     completedServicesCount: 0,
     ratingsAggregate: { avg: 0, count: 0 },
   }));

@@ -5,6 +5,8 @@ import professionalsRouter from './routes/professionals';
 import servicesRouter from './routes/services';
 import reviewsRouter from './routes/reviews';
 import authRouter from './routes/auth';
+import categoriesRouter from './routes/categories';
+import bookingsRouter from './routes/bookings';
 import { PrismaClient } from '@prisma/client';
 
 const app = express();
@@ -21,6 +23,8 @@ app.use('/auth', authRouter);
 app.use('/professionals', professionalsRouter);
 app.use('/services', servicesRouter);
 app.use('/reviews', reviewsRouter);
+app.use('/categories', categoriesRouter);
+app.use('/bookings', bookingsRouter);
 
 const PORT = process.env.PORT || 3333;
 app.listen(PORT, () => {
