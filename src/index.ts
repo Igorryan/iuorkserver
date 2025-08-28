@@ -1,14 +1,16 @@
 import express from 'express';
 import cors from 'cors';
 
-import professionalsRouter from './routes/professionals';
-import servicesRouter from './routes/services';
-import reviewsRouter from './routes/reviews';
-import authRouter from './routes/auth';
-import categoriesRouter from './routes/categories';
-import bookingsRouter from './routes/bookings';
+import professionalsRouter from '@server/routes/professionals';
+import servicesRouter from '@server/routes/services';
+import reviewsRouter from '@server/routes/reviews';
+import authRouter from '@server/routes/auth';
+import categoriesRouter from '@server/routes/categories';
+import bookingsRouter from '@server/routes/bookings';
 import { PrismaClient } from '@prisma/client';
+import dotenv from 'dotenv';
 
+dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
