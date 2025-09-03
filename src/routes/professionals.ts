@@ -303,6 +303,7 @@ router.get('/:id/services', async (req, res) => {
       professionalId: s.professionalId,
       category: s.category?.name ?? '',
       description: s.description,
+      pricingType: s.pricingType,
       price: s.price ? Number(s.price) : null,
       images: s.images.map((i) => i.url),
     })),

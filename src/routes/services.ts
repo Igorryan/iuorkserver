@@ -57,6 +57,7 @@ router.get('/', async (_req, res) => {
       name: s.title,
       category: s.category?.name ?? '',
       description: s.description,
+      pricingType: s.pricingType,
       price: s.price ? Number(s.price) : null,
       images: s.images.map((i) => i.url),
     })),
@@ -78,6 +79,7 @@ router.get('/mine', requireAuth, async (req: AuthenticatedRequest, res) => {
       name: s.title,
       category: s.category?.name ?? '',
       description: s.description,
+      pricingType: s.pricingType,
       price: s.price ? Number(s.price) : null,
       images: s.images.map((i) => i.url),
     })),
@@ -144,6 +146,7 @@ router.get('/:id', async (req, res) => {
     name: s.title,
     category: s.category?.name ?? '',
     description: s.description,
+    pricingType: s.pricingType,
     price: s.price ? Number(s.price) : null,
     images: s.images.map((i) => i.url),
   });
