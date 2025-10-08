@@ -64,6 +64,7 @@ router.get('/', async (_req, res) => {
   const response = data.map((p) => ({
     id: p.id,
     image: p.user.avatarUrl ?? '',
+    coverImage: p.coverUrl ?? '',
     name: p.user.name,
     profession: p.categories?.[0]?.name ?? 'Profissional',
     description: p.bio ?? '',
@@ -117,6 +118,25 @@ router.post('/me/avatar', requireAuth, upload.single('file'), async (req: Authen
     return res.status(500).json({ message: 'Erro interno do servidor' });
   }
 });
+
+// Upload de foto de capa do profissional
+router.post('/me/cover', requireAuth, upload.single('file'), async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.user?.role !== 'PRO') return res.status(403).json({ message: 'Somente profissionais' });
+    if (!req.file) return res.status(400).json({ message: 'Arquivo não enviado' });
+    const input = sharp(req.file.buffer);
+    // Foto de capa maior: largura máx 1200px
+    const processed = await input.rotate().resize({ width: 1200, withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+    const url = await uploadAvatarToS3(processed, 'image/jpeg');
+    const proProfile = await prisma.professionalProfile.upsert({ where: { userId: req.user.id }, update: {}, create: { userId: req.user.id } });
+    await prisma.professionalProfile.update({ where: { id: proProfile.id }, data: { coverUrl: url } });
+    return res.status(201).json({ url });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ message: 'Erro interno do servidor' });
+  }
+});
+
 // Atualiza endereço do profissional autenticado (PRO) via userId
 router.put('/me/address', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
@@ -271,6 +291,7 @@ router.get('/:id', async (req, res) => {
   const response = {
     id: p.id,
     image: p.user.avatarUrl ?? '',
+    coverImage: p.coverUrl ?? '',
     name: p.user.name,
     profession: 'Profissional',
     description: p.bio ?? '',

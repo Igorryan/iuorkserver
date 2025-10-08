@@ -51,6 +51,7 @@ model ProfessionalProfile {
   user        User     @relation(fields: [userId], references: [id])
   userId      String   @unique
   bio         String?
+  coverUrl    String?
   radiusKm    Int      @default(5)
   latitude    Decimal? @db.Decimal(9,6)
   longitude   Decimal? @db.Decimal(9,6)
