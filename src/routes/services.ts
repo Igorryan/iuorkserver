@@ -192,4 +192,41 @@ router.post('/:id/images', requireAuth, upload.array('files', 10), async (req: A
   }
 });
 
+// Delete de um serviço do PRO autenticado
+router.delete('/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.user?.role !== 'PRO') {
+      return res.status(403).json({ message: 'Somente profissionais podem excluir serviços' });
+    }
+
+    const serviceId = req.params.id;
+    const service = await prisma.service.findUnique({
+      where: { id: serviceId },
+      include: { professional: true },
+    });
+
+    if (!service) {
+      return res.status(404).json({ message: 'Serviço não encontrado' });
+    }
+
+    const proProfile = await prisma.professionalProfile.findUnique({
+      where: { userId: req.user.id },
+    });
+
+    if (!proProfile || proProfile.id !== service.professionalId) {
+      return res.status(403).json({ message: 'Você não tem permissão para excluir este serviço' });
+    }
+
+    // Deleta o serviço (as imagens são deletadas em cascata pelo Prisma)
+    await prisma.service.delete({
+      where: { id: serviceId },
+    });
+
+    return res.status(200).json({ message: 'Serviço excluído com sucesso' });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ message: 'Erro interno do servidor' });
+  }
+});
+
 export default router;

@@ -98,7 +98,7 @@ model Service {
 
 model ServiceImage {
   id        String  @id @default(uuid())
-  service   Service @relation(fields: [serviceId], references: [id])
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   serviceId String
   url       String
 }
@@ -109,7 +109,7 @@ model Booking {
   clientId    String
   professional User    @relation("BookingPro", fields: [professionalId], references: [id])
   professionalId String
-  service      Service  @relation(fields: [serviceId], references: [id])
+  service      Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   serviceId    String
   status       BookingStatus @default(REQUESTED)
   scheduledAt  DateTime?
@@ -124,7 +124,7 @@ model Booking {
 
 model Review {
   id        String   @id @default(uuid())
-  service   Service  @relation(fields: [serviceId], references: [id])
+  service   Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
   serviceId String
   fromUser  User     @relation("ReviewFrom", fields: [fromUserId], references: [id])
   fromUserId String
