@@ -29,72 +29,76 @@ enum PricingType {
 }
 
 model User {
-  id         String   @id @default(uuid())
-  role       UserRole
-  name       String
-  phone      String?  @unique
-  email      String?  @unique
+  id           String   @id @default(uuid())
+  role         UserRole
+  name         String
+  phone        String?  @unique
+  email        String?  @unique
   passwordHash String?
-  avatarUrl  String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  avatarUrl    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   professionalProfile ProfessionalProfile?
-  bookingsClient      Booking[]           @relation("BookingClient")
-  bookingsPro         Booking[]           @relation("BookingPro")
-  reviewsFrom         Review[]            @relation("ReviewFrom")
-  reviewsTo           Review[]            @relation("ReviewTo")
+  bookingsClient      Booking[]            @relation("BookingClient")
+  bookingsPro         Booking[]            @relation("BookingPro")
+  reviewsFrom         Review[]             @relation("ReviewFrom")
+  reviewsTo           Review[]             @relation("ReviewTo")
+  chatsAsClient       Chat[]               @relation("ChatClient")
+  chatsAsProfessional Chat[]               @relation("ChatProfessional")
+  messages            Message[]
 }
 
 model ProfessionalProfile {
-  id          String   @id @default(uuid())
-  user        User     @relation(fields: [userId], references: [id])
-  userId      String   @unique
-  bio         String?
-  coverUrl    String?
-  radiusKm    Int      @default(5)
-  latitude    Decimal? @db.Decimal(9,6)
-  longitude   Decimal? @db.Decimal(9,6)
-  city        String?
-  state       String?
-  street      String?
-  number      String?
-  district    String?
-  postalcode  String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id         String   @id @default(uuid())
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String   @unique
+  bio        String?
+  coverUrl   String?
+  radiusKm   Int      @default(5)
+  latitude   Decimal? @db.Decimal(9, 6)
+  longitude  Decimal? @db.Decimal(9, 6)
+  city       String?
+  state      String?
+  street     String?
+  number     String?
+  district   String?
+  postalcode String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  services    Service[]
-  categories  Category[] @relation("ProfessionalCategories")
+  services   Service[]
+  categories Category[] @relation("ProfessionalCategories")
 }
 
 model Category {
-  id     String   @id @default(uuid())
-  name   String   @unique
-  parent Category? @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  id       String     @id @default(uuid())
+  name     String     @unique
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
   parentId String?
   children Category[] @relation("CategoryHierarchy")
 
-  services Service[]
+  services      Service[]
   professionals ProfessionalProfile[] @relation("ProfessionalCategories")
 }
 
 model Service {
-  id             String   @id @default(uuid())
+  id             String              @id @default(uuid())
   professional   ProfessionalProfile @relation(fields: [professionalId], references: [id])
   professionalId String
   title          String
   description    String
-  pricingType    PricingType @default(BUDGET)
-  price          Decimal?    @db.Decimal(10,2)
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  pricingType    PricingType         @default(BUDGET)
+  price          Decimal?            @db.Decimal(10, 2)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 
-  category   Category? @relation(fields: [categoryId], references: [id])
+  category   Category?      @relation(fields: [categoryId], references: [id])
   categoryId String?
   images     ServiceImage[]
   bookings   Booking[]
   reviews    Review[]
+  chats      Chat[]
 }
 
 model ServiceImage {
@@ -105,35 +109,76 @@ model ServiceImage {
 }
 
 model Booking {
-  id          String   @id @default(uuid())
-  client      User     @relation("BookingClient", fields: [clientId], references: [id])
-  clientId    String
-  professional User    @relation("BookingPro", fields: [professionalId], references: [id])
+  id             String        @id @default(uuid())
+  client         User          @relation("BookingClient", fields: [clientId], references: [id])
+  clientId       String
+  professional   User          @relation("BookingPro", fields: [professionalId], references: [id])
   professionalId String
-  service      Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-  serviceId    String
-  status       BookingStatus @default(REQUESTED)
-  scheduledAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  service        Service       @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  serviceId      String
+  status         BookingStatus @default(REQUESTED)
+  scheduledAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   // Local de execução (apenas lat/lng por compatibilidade com clients)
-  latitude   Decimal? @db.Decimal(9,6)
-  longitude  Decimal? @db.Decimal(9,6)
-  address    String?
+  latitude  Decimal? @db.Decimal(9, 6)
+  longitude Decimal? @db.Decimal(9, 6)
+  address   String?
 }
 
 model Review {
-  id        String   @id @default(uuid())
-  service   Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-  serviceId String
-  fromUser  User     @relation("ReviewFrom", fields: [fromUserId], references: [id])
+  id         String   @id @default(uuid())
+  service    Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  serviceId  String
+  fromUser   User     @relation("ReviewFrom", fields: [fromUserId], references: [id])
   fromUserId String
-  toUser    User     @relation("ReviewTo", fields: [toUserId], references: [id])
-  toUserId  String
-  rating    Int
-  comment   String
-  createdAt DateTime @default(now())
+  toUser     User     @relation("ReviewTo", fields: [toUserId], references: [id])
+  toUserId   String
+  rating     Int
+  comment    String
+  createdAt  DateTime @default(now())
 }
 
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+}
 
+model Chat {
+  id             String   @id @default(uuid())
+  client         User     @relation("ChatClient", fields: [clientId], references: [id])
+  clientId       String
+  professional   User     @relation("ChatProfessional", fields: [professionalId], references: [id])
+  professionalId String
+  service        Service? @relation(fields: [serviceId], references: [id])
+  serviceId      String?
+  lastMessageAt  DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  messages Message[]
+
+  @@unique([clientId, professionalId, serviceId])
+  @@index([clientId])
+  @@index([professionalId])
+  @@index([lastMessageAt])
+}
+
+model Message {
+  id            String      @id @default(uuid())
+  chat          Chat        @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chatId        String
+  sender        User        @relation(fields: [senderId], references: [id])
+  senderId      String
+  content       String?
+  messageType   MessageType @default(TEXT)
+  mediaUrl      String?
+  audioDuration Int?
+  isRead        Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+
+  @@index([chatId, createdAt])
+  @@index([senderId])
+}

@@ -63,6 +63,7 @@ router.get('/', async (_req, res) => {
   });
   const response = data.map((p) => ({
     id: p.id,
+    userId: p.userId, // ✅ ID do User (para chat)
     image: p.user.avatarUrl ?? '',
     coverImage: p.coverUrl ?? '',
     name: p.user.name,
@@ -290,6 +291,7 @@ router.get('/:id', async (req, res) => {
   if (!p) return res.status(404).json({ message: 'Professional not found' });
   const response = {
     id: p.id,
+    userId: p.userId, // ✅ ID do User (para chat)
     image: p.user.avatarUrl ?? '',
     coverImage: p.coverUrl ?? '',
     name: p.user.name,
