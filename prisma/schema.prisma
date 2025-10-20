@@ -146,6 +146,14 @@ enum MessageType {
   AUDIO
 }
 
+enum BudgetStatus {
+  PENDING
+  QUOTED
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
 model Chat {
   id             String   @id @default(uuid())
   client         User     @relation("ChatClient", fields: [clientId], references: [id])
@@ -154,13 +162,13 @@ model Chat {
   professionalId String
   service        Service? @relation(fields: [serviceId], references: [id])
   serviceId      String?
+  budget         Budget?  @relation("BudgetChat")
   lastMessageAt  DateTime @default(now())
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   messages Message[]
 
-  @@unique([clientId, professionalId, serviceId])
   @@index([clientId])
   @@index([professionalId])
   @@index([lastMessageAt])
@@ -181,4 +189,20 @@ model Message {
 
   @@index([chatId, createdAt])
   @@index([senderId])
+}
+
+model Budget {
+  id          String       @id @default(uuid())
+  chat        Chat         @relation("BudgetChat", fields: [chatId], references: [id], onDelete: Cascade)
+  chatId      String       @unique
+  serviceId   String
+  price       Decimal      @db.Decimal(10, 2)
+  description String?
+  status      BudgetStatus @default(PENDING)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  expiresAt   DateTime?
+
+  @@index([serviceId])
+  @@index([status])
 }

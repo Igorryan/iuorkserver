@@ -32,6 +32,12 @@ export function initializeSocket(httpServer: HTTPServer) {
       console.log(`💼 Profissional ${userId} conectado`);
     });
 
+    // Cliente entra na sala de notificações gerais
+    socket.on('join-client', (userId: string) => {
+      socket.join(`client:${userId}`);
+      console.log(`👤 Cliente ${userId} conectado`);
+    });
+
     socket.on('disconnect', () => {
       console.log('❌ Cliente desconectado:', socket.id);
     });

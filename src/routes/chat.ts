@@ -17,13 +17,11 @@ router.get('/chats/check', async (req: Request, res: Response) => {
     // Normalizar serviceId: string vazia ou undefined → null
     const normalizedServiceId: string | null = (serviceId && serviceId !== '') ? (serviceId as string) : null;
 
-    const chat = await prisma.chat.findUnique({
+    const chat = await prisma.chat.findFirst({
       where: {
-        clientId_professionalId_serviceId: {
-          clientId: clientId as string,
-          professionalId: professionalId as string,
-          serviceId: normalizedServiceId,
-        },
+        clientId: clientId as string,
+        professionalId: professionalId as string,
+        serviceId: normalizedServiceId,
       },
       include: {
         client: {
@@ -79,13 +77,11 @@ router.post('/chats', async (req: Request, res: Response) => {
     const normalizedServiceId: string | null = (serviceId && serviceId !== '') ? serviceId : null;
 
     // Verificar se chat já existe
-    let chat = await prisma.chat.findUnique({
+    let chat = await prisma.chat.findFirst({
       where: {
-        clientId_professionalId_serviceId: {
-          clientId,
-          professionalId,
-          serviceId: normalizedServiceId,
-        },
+        clientId,
+        professionalId,
+        serviceId: normalizedServiceId,
       },
       include: {
         client: {
@@ -189,6 +185,15 @@ router.get('/chats/user/:userId', async (req: Request, res: Response) => {
           select: {
             id: true,
             title: true,
+          },
+        },
+        budget: {
+          select: {
+            id: true,
+            status: true,
+            price: true,
+            description: true,
+            expiresAt: true,
           },
         },
         messages: {
@@ -299,19 +304,43 @@ router.post('/chats/:chatId/messages', async (req: Request, res: Response) => {
     // Emitir evento WebSocket para todos conectados neste chat
     try {
       const io = getIO();
-      io.to(`chat:${chatId}`).emit(SocketEvents.NEW_MESSAGE, message);
       
-      // Notificar profissional sobre novo chat se for primeira mensagem
-      const messageCount = await prisma.message.count({ where: { chatId } });
-      if (messageCount === 1) {
-        const chat = await prisma.chat.findUnique({
-          where: { id: chatId },
-          include: {
-            client: { select: { id: true, name: true, avatarUrl: true } },
-            service: { select: { id: true, title: true } },
+      // Buscar informações do chat
+      const chat = await prisma.chat.findUnique({
+        where: { id: chatId },
+        include: {
+          client: { select: { id: true, name: true, avatarUrl: true } },
+          professional: { select: { id: true, name: true, avatarUrl: true } },
+          service: { select: { id: true, title: true } },
+        },
+      });
+
+      if (chat) {
+        console.log(`📤 [CHAT:${chatId}] Nova mensagem de ${message.sender.name}`);
+        
+        // 1. Emitir mensagem apenas para quem está NO CHAT específico
+        io.to(`chat:${chatId}`).emit(SocketEvents.NEW_MESSAGE, message);
+        console.log(`   ✅ Emitido para room: chat:${chatId}`);
+        
+        // 2. Atualizar lista de chats (sem conteúdo da mensagem, só notificação)
+        const chatListUpdate = {
+          chatId: chat.id,
+          lastMessageAt: new Date(),
+          lastMessage: {
+            content: message.content,
+            senderId: message.senderId,
+            createdAt: message.createdAt,
           },
-        });
-        if (chat) {
+        };
+        
+        io.to(`professional:${chat.professionalId}`).emit('chat-list-update', chatListUpdate);
+        io.to(`client:${chat.clientId}`).emit('chat-list-update', chatListUpdate);
+        console.log(`   📋 Lista atualizada para profissional e cliente`);
+
+        // 3. Notificar profissional sobre novo chat se for primeira mensagem
+        const messageCount = await prisma.message.count({ where: { chatId } });
+        if (messageCount === 1) {
+          console.log(`   🆕 Primeiro chat - Notificando profissional`);
           io.to(`professional:${chat.professionalId}`).emit(SocketEvents.NEW_CHAT, chat);
         }
       }
@@ -349,6 +378,37 @@ router.patch('/chats/:chatId/messages/read', async (req: Request, res: Response)
         isRead: true,
       },
     });
+
+    // Emitir evento WebSocket para notificar que mensagens foram lidas
+    try {
+      const io = getIO();
+      
+      // Buscar informações do chat para notificar o usuário correto
+      const chat = await prisma.chat.findUnique({
+        where: { id: chatId },
+        select: {
+          clientId: true,
+          professionalId: true,
+        },
+      });
+
+      if (chat) {
+        console.log(`📖 Mensagens lidas no chat ${chatId} por userId: ${userId}`);
+        
+        // Emitir evento para ambos os usuários (profissional e cliente)
+        // O evento inclui chatId e userId de quem leu
+        io.to(`professional:${chat.professionalId}`).emit(SocketEvents.MESSAGE_READ, {
+          chatId,
+          userId,
+        });
+        io.to(`client:${chat.clientId}`).emit(SocketEvents.MESSAGE_READ, {
+          chatId,
+          userId,
+        });
+      }
+    } catch (error) {
+      console.error('Erro ao emitir evento MESSAGE_READ:', error);
+    }
 
     return res.json({ success: true });
   } catch (error) {

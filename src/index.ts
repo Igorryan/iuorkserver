@@ -10,6 +10,7 @@ import authRouter from '@server/routes/auth';
 import categoriesRouter from '@server/routes/categories';
 import bookingsRouter from '@server/routes/bookings';
 import chatRouter from '@server/routes/chat';
+import budgetRouter from '@server/routes/budget';
 import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
 
@@ -37,6 +38,7 @@ app.use('/reviews', reviewsRouter);
 app.use('/categories', categoriesRouter);
 app.use('/bookings', bookingsRouter);
 app.use('/api', chatRouter);
+app.use('/api', budgetRouter);
 
 const PORT = process.env.PORT || 3333;
 httpServer.listen(PORT, () => {
