@@ -20,9 +20,11 @@ function requireAuth(req: AuthenticatedRequest, res: any, next: any) {
   if (!token) return res.status(401).json({ message: 'Não autorizado' });
   try {
     const payload = jwt.verify(token, JWT_SECRET) as { sub: string; role: 'CLIENT' | 'PRO' };
+    console.log('[DEBUG] requireAuth - Token decodificado:', { sub: payload.sub, role: payload.role });
     req.user = { id: payload.sub, role: payload.role };
     return next();
-  } catch {
+  } catch (error) {
+    console.error('[DEBUG] requireAuth - Erro ao verificar token:', error);
     return res.status(401).json({ message: 'Token inválido' });
   }
 }
@@ -65,7 +67,11 @@ router.get('/', async (_req, res) => {
 });
 
 router.get('/mine', requireAuth, async (req: AuthenticatedRequest, res) => {
-  if (req.user?.role !== 'PRO') return res.status(403).json({ message: 'Somente profissionais podem listar seus serviços' });
+  console.log('[DEBUG] /services/mine - req.user:', req.user);
+  if (req.user?.role !== 'PRO') {
+    console.log('[DEBUG] Role check failed. Expected PRO, got:', req.user?.role);
+    return res.status(403).json({ message: 'Somente profissionais podem listar seus serviços' });
+  }
   const proProfile = await prisma.professionalProfile.findUnique({ where: { userId: req.user.id } });
   if (!proProfile) {
     // Sem perfil ainda: retornar lista vazia
@@ -186,6 +192,72 @@ router.post('/:id/images', requireAuth, upload.array('files', 10), async (req: A
     });
 
     return res.status(201).json({ images: urls });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ message: 'Erro interno do servidor' });
+  }
+});
+
+// Update de um serviço do PRO autenticado
+router.put('/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.user?.role !== 'PRO') {
+      return res.status(403).json({ message: 'Somente profissionais podem editar serviços' });
+    }
+
+    const serviceId = req.params.id;
+    const { title, description, pricingType, price, categoryId } = req.body as {
+      title?: string;
+      description?: string;
+      pricingType?: 'FIXED' | 'HOURLY' | 'BUDGET';
+      price?: number | null;
+      categoryId?: string | null;
+    };
+
+    if (!title || !description) {
+      return res.status(400).json({ message: 'Título e descrição são obrigatórios' });
+    }
+
+    const service = await prisma.service.findUnique({
+      where: { id: serviceId },
+      include: { professional: true },
+    });
+
+    if (!service) {
+      return res.status(404).json({ message: 'Serviço não encontrado' });
+    }
+
+    const proProfile = await prisma.professionalProfile.findUnique({
+      where: { userId: req.user.id },
+    });
+
+    if (!proProfile || proProfile.id !== service.professionalId) {
+      return res.status(403).json({ message: 'Você não tem permissão para editar este serviço' });
+    }
+
+    // Atualiza o serviço
+    const updated = await prisma.service.update({
+      where: { id: serviceId },
+      data: {
+        title,
+        description,
+        pricingType: pricingType ?? 'BUDGET',
+        price: price ?? null,
+        categoryId: categoryId ?? null,
+      },
+      include: { images: true, category: true },
+    });
+
+    return res.status(200).json({
+      id: updated.id,
+      professionalId: updated.professionalId,
+      name: updated.title,
+      category: updated.category?.name ?? '',
+      description: updated.description,
+      pricingType: updated.pricingType,
+      price: updated.price ? Number(updated.price) : null,
+      images: updated.images.map((i) => i.url),
+    });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ message: 'Erro interno do servidor' });

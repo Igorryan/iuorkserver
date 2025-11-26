@@ -88,6 +88,39 @@ router.get('/', async (_req, res) => {
   return res.json(response);
 });
 
+// Busca dados do perfil do profissional autenticado
+router.get('/me', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.user?.role !== 'PRO') return res.status(403).json({ message: 'Somente profissionais' });
+    const proProfile = await prisma.professionalProfile.findUnique({
+      where: { userId: req.user.id },
+      include: { user: true },
+    });
+    if (!proProfile) {
+      // Cria perfil se não existir
+      const newProfile = await prisma.professionalProfile.create({
+        data: { userId: req.user.id },
+        include: { user: true },
+      });
+      return res.json({
+        id: newProfile.id,
+        bio: newProfile.bio || null,
+        avatarUrl: newProfile.user.avatarUrl || null,
+        coverUrl: newProfile.coverUrl || null,
+      });
+    }
+    return res.json({
+      id: proProfile.id,
+      bio: proProfile.bio || null,
+      avatarUrl: proProfile.user.avatarUrl || null,
+      coverUrl: proProfile.coverUrl || null,
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ message: 'Erro interno do servidor' });
+  }
+});
+
 // Atualiza bio do profissional autenticado
 router.put('/me/profile', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {

@@ -124,38 +124,6 @@ router.post('/budgets/request', async (req: Request, res: Response) => {
         },
       },
       include: {
-        chat: true,
-      },
-    });
-
-    if (existingRequest) {
-      // Se já existe, retorna o existente ao invés de criar duplicado
-      return res.json(existingRequest);
-    }
-
-    // Criar chat dedicado para este orçamento
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
-
-    const chat = await prisma.chat.create({
-      data: {
-        clientId,
-        professionalId,
-        serviceId,
-      },
-    });
-
-    // Criar solicitação de orçamento vinculada ao chat
-    const budgetRequest = await prisma.budget.create({
-      data: {
-        chatId: chat.id,
-        serviceId,
-        price: '0', // Preço será definido pelo profissional
-        description: 'Solicitação de orçamento',
-        status: 'PENDING',
-        expiresAt,
-      },
-      include: {
         chat: {
           include: {
             client: {
@@ -172,35 +140,210 @@ router.post('/budgets/request', async (req: Request, res: Response) => {
       },
     });
 
-    console.log(`📝 Orçamento criado: ${budgetRequest.id} com chat dedicado: ${chat.id}`);
+    if (existingRequest) {
+      // Se já existe, retorna o existente ao invés de criar duplicado
+      console.log(`♻️  Orçamento PENDING já existe: ${existingRequest.id} - retornando existente`);
+      return res.json(existingRequest);
+    }
 
-    // Emitir evento para o profissional sobre o novo chat/orçamento
-    try {
-      const io = getIO();
-      io.to(`professional:${professionalId}`).emit(SocketEvents.NEW_CHAT, {
-        id: chat.id,
+    // Verificar se existe um chat anterior entre cliente/profissional para este serviço
+    const existingChat = await prisma.chat.findFirst({
+      where: {
         clientId,
         professionalId,
         serviceId,
-        lastMessageAt: chat.lastMessageAt,
-        createdAt: chat.createdAt,
-        updatedAt: chat.updatedAt,
-        client: budgetRequest.chat.client,
-        service: budgetRequest.chat.service,
-        budget: {
-          id: budgetRequest.id,
-          status: budgetRequest.status,
-          price: budgetRequest.price.toString(),
-          description: budgetRequest.description,
-          expiresAt: budgetRequest.expiresAt,
-        },
-        messages: [],
-        _count: { messages: 0 },
-      });
+      },
+      include: {
+        budget: true,
+      },
+    });
+
+    let chat = existingChat;
+    let budgetRequest;
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+    if (existingChat && existingChat.budget) {
+      // ✅ Chat já existe com budget - ATUALIZAR o budget existente para PENDING
+      console.log(`♻️  Reutilizando chat existente: ${existingChat.id} - atualizando budget`);
       
-      console.log(`📤 Evento NEW_CHAT emitido para profissional: ${professionalId}`);
-    } catch (error) {
-      console.error('Erro ao emitir evento NEW_CHAT:', error);
+      budgetRequest = await prisma.budget.update({
+        where: { id: existingChat.budget.id },
+        data: {
+          status: 'PENDING',
+          price: '0',
+          description: 'Solicitação de orçamento',
+          expiresAt,
+        },
+        include: {
+          chat: {
+            include: {
+              client: {
+                select: { id: true, name: true, avatarUrl: true },
+              },
+              professional: {
+                select: { id: true, name: true, avatarUrl: true },
+              },
+              service: {
+                select: { id: true, title: true },
+              },
+            },
+          },
+        },
+      });
+
+      // Atualizar lastMessageAt do chat
+      await prisma.chat.update({
+        where: { id: existingChat.id },
+        data: { lastMessageAt: new Date() },
+      });
+
+      console.log(`📝 Budget atualizado para PENDING: ${budgetRequest.id}`);
+
+      // Emitir evento de atualização para o profissional
+      try {
+        const io = getIO();
+        io.to(`professional:${professionalId}`).emit('chat-list-update', {
+          chatId: existingChat.id,
+          budget: {
+            id: budgetRequest.id,
+            status: 'PENDING',
+            price: '0',
+            description: budgetRequest.description,
+            expiresAt: budgetRequest.expiresAt,
+          },
+        });
+        
+        console.log(`📤 Evento chat-list-update emitido para profissional: ${professionalId}`);
+      } catch (error) {
+        console.error('Erro ao emitir evento chat-list-update:', error);
+      }
+
+    } else if (existingChat) {
+      // ✅ Chat existe mas sem budget - CRIAR novo budget
+      console.log(`♻️  Reutilizando chat existente: ${existingChat.id} - criando novo budget`);
+      
+      budgetRequest = await prisma.budget.create({
+        data: {
+          chatId: existingChat.id,
+          serviceId,
+          price: '0',
+          description: 'Solicitação de orçamento',
+          status: 'PENDING',
+          expiresAt,
+        },
+        include: {
+          chat: {
+            include: {
+              client: {
+                select: { id: true, name: true, avatarUrl: true },
+              },
+              professional: {
+                select: { id: true, name: true, avatarUrl: true },
+              },
+              service: {
+                select: { id: true, title: true },
+              },
+            },
+          },
+        },
+      });
+
+      // Atualizar lastMessageAt do chat
+      await prisma.chat.update({
+        where: { id: existingChat.id },
+        data: { lastMessageAt: new Date() },
+      });
+
+      console.log(`📝 Budget criado no chat existente: ${budgetRequest.id}`);
+
+      // Emitir evento de atualização para o profissional
+      try {
+        const io = getIO();
+        io.to(`professional:${professionalId}`).emit('chat-list-update', {
+          chatId: existingChat.id,
+          budget: {
+            id: budgetRequest.id,
+            status: 'PENDING',
+            price: '0',
+            description: budgetRequest.description,
+            expiresAt: budgetRequest.expiresAt,
+          },
+        });
+        
+        console.log(`📤 Evento chat-list-update emitido para profissional: ${professionalId}`);
+      } catch (error) {
+        console.error('Erro ao emitir evento chat-list-update:', error);
+      }
+
+    } else {
+      // ✅ Primeira vez - CRIAR novo chat E budget
+      console.log(`🆕 Criando novo chat e budget`);
+      
+      chat = await prisma.chat.create({
+        data: {
+          clientId,
+          professionalId,
+          serviceId,
+        },
+      });
+
+      budgetRequest = await prisma.budget.create({
+        data: {
+          chatId: chat.id,
+          serviceId,
+          price: '0',
+          description: 'Solicitação de orçamento',
+          status: 'PENDING',
+          expiresAt,
+        },
+        include: {
+          chat: {
+            include: {
+              client: {
+                select: { id: true, name: true, avatarUrl: true },
+              },
+              professional: {
+                select: { id: true, name: true, avatarUrl: true },
+              },
+              service: {
+                select: { id: true, title: true },
+              },
+            },
+          },
+        },
+      });
+
+      console.log(`📝 Novo orçamento criado: ${budgetRequest.id} com chat dedicado: ${chat.id}`);
+
+      // Emitir evento para o profissional sobre o novo chat/orçamento
+      try {
+        const io = getIO();
+        io.to(`professional:${professionalId}`).emit(SocketEvents.NEW_CHAT, {
+          id: chat.id,
+          clientId,
+          professionalId,
+          serviceId,
+          lastMessageAt: chat.lastMessageAt,
+          createdAt: chat.createdAt,
+          updatedAt: chat.updatedAt,
+          client: budgetRequest.chat.client,
+          service: budgetRequest.chat.service,
+          budget: {
+            id: budgetRequest.id,
+            status: budgetRequest.status,
+            price: budgetRequest.price.toString(),
+            description: budgetRequest.description,
+            expiresAt: budgetRequest.expiresAt,
+          },
+          messages: [],
+          _count: { messages: 0 },
+        });
+        
+        console.log(`📤 Evento NEW_CHAT emitido para profissional: ${professionalId}`);
+      } catch (error) {
+        console.error('Erro ao emitir evento NEW_CHAT:', error);
+      }
     }
 
     return res.status(201).json(budgetRequest);
