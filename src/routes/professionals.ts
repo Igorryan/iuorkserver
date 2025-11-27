@@ -59,6 +59,7 @@ router.get('/', async (_req, res) => {
         include: { images: true, category: true },
       },
       categories: true,
+      profession: true,
     },
   });
   const response = data.map((p) => ({
@@ -67,7 +68,7 @@ router.get('/', async (_req, res) => {
     image: p.user.avatarUrl ?? '',
     coverImage: p.coverUrl ?? '',
     name: p.user.name,
-    profession: p.categories?.[0]?.name ?? 'Profissional',
+    profession: p.profession?.name ?? 'Profissional',
     description: p.bio ?? '',
     address: p.latitude != null && p.longitude != null
       ? {
@@ -94,19 +95,20 @@ router.get('/me', requireAuth, async (req: AuthenticatedRequest, res) => {
     if (req.user?.role !== 'PRO') return res.status(403).json({ message: 'Somente profissionais' });
     const proProfile = await prisma.professionalProfile.findUnique({
       where: { userId: req.user.id },
-      include: { user: true },
+      include: { user: true, profession: true },
     });
     if (!proProfile) {
       // Cria perfil se não existir
       const newProfile = await prisma.professionalProfile.create({
         data: { userId: req.user.id },
-        include: { user: true },
+        include: { user: true, profession: true },
       });
       return res.json({
         id: newProfile.id,
         bio: newProfile.bio || null,
         avatarUrl: newProfile.user.avatarUrl || null,
         coverUrl: newProfile.coverUrl || null,
+        professionId: newProfile.professionId || null,
       });
     }
     return res.json({
@@ -114,6 +116,7 @@ router.get('/me', requireAuth, async (req: AuthenticatedRequest, res) => {
       bio: proProfile.bio || null,
       avatarUrl: proProfile.user.avatarUrl || null,
       coverUrl: proProfile.coverUrl || null,
+      professionId: proProfile.professionId || null,
     });
   } catch (e) {
     console.error(e);
@@ -125,10 +128,21 @@ router.get('/me', requireAuth, async (req: AuthenticatedRequest, res) => {
 router.put('/me/profile', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     if (req.user?.role !== 'PRO') return res.status(403).json({ message: 'Somente profissionais' });
-    const { bio } = req.body as { bio?: string };
+    const { bio, professionId } = req.body as { bio?: string; professionId?: string };
     const proProfile = await prisma.professionalProfile.upsert({ where: { userId: req.user.id }, update: {}, create: { userId: req.user.id } });
-    const updated = await prisma.professionalProfile.update({ where: { id: proProfile.id }, data: { bio: bio ?? undefined }, include: { user: true, categories: true } });
-    return res.json({ id: updated.id, bio: updated.bio });
+    const updated = await prisma.professionalProfile.update({ 
+      where: { id: proProfile.id }, 
+      data: { 
+        bio: bio ?? undefined,
+        professionId: professionId ?? undefined,
+      }, 
+      include: { user: true, categories: true, profession: true } 
+    });
+    return res.json({ 
+      id: updated.id, 
+      bio: updated.bio,
+      profession: updated.profession?.name || null,
+    });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ message: 'Erro interno do servidor' });
@@ -215,14 +229,14 @@ router.put('/me/address', requireAuth, async (req: AuthenticatedRequest, res) =>
         state: state ?? undefined,
         postalcode: postalcode ?? undefined,
       },
-      include: { user: true, categories: true },
+      include: { user: true, categories: true, profession: true },
     });
 
     return res.json({
       id: updated.id,
       image: updated.user.avatarUrl ?? '',
       name: updated.user.name,
-      profession: updated.categories?.[0]?.name ?? 'Profissional',
+      profession: updated.profession?.name ?? 'Profissional',
       description: updated.bio ?? '',
       address: updated.latitude != null && updated.longitude != null
         ? {
@@ -282,14 +296,14 @@ router.put('/:id/address', async (req, res) => {
         state: state ?? undefined,
         postalcode: postalcode ?? undefined,
       },
-      include: { user: true, categories: true },
+      include: { user: true, categories: true, profession: true },
     });
 
     return res.json({
       id: updated.id,
       image: updated.user.avatarUrl ?? '',
       name: updated.user.name,
-      profession: updated.categories?.[0]?.name ?? 'Profissional',
+      profession: updated.profession?.name ?? 'Profissional',
       description: updated.bio ?? '',
       address: updated.latitude != null && updated.longitude != null
         ? {
@@ -319,7 +333,7 @@ router.put('/:id/address', async (req, res) => {
 router.get('/:id', async (req, res) => {
   const p = await prisma.professionalProfile.findUnique({
     where: { id: req.params.id },
-    include: { user: true },
+    include: { user: true, profession: true },
   });
   if (!p) return res.status(404).json({ message: 'Professional not found' });
   const response = {
@@ -328,7 +342,7 @@ router.get('/:id', async (req, res) => {
     image: p.user.avatarUrl ?? '',
     coverImage: p.coverUrl ?? '',
     name: p.user.name,
-    profession: 'Profissional',
+    profession: p.profession?.name ?? 'Profissional',
     description: p.bio ?? '',
     address: {
       latitude: Number(p.latitude ?? 0),

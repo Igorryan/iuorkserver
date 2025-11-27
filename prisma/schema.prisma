@@ -64,6 +64,8 @@ model ProfessionalProfile {
   number     String?
   district   String?
   postalcode String?
+  profession Profession? @relation(fields: [professionId], references: [id])
+  professionId String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -72,11 +74,12 @@ model ProfessionalProfile {
 }
 
 model Category {
-  id       String     @id @default(uuid())
-  name     String     @unique
-  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
-  parentId String?
-  children Category[] @relation("CategoryHierarchy")
+  id        String     @id @default(uuid())
+  name      String     @unique
+  imageUrl  String?
+  parent    Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  parentId  String?
+  children  Category[] @relation("CategoryHierarchy")
 
   services      Service[]
   professionals ProfessionalProfile[] @relation("ProfessionalCategories")
@@ -205,4 +208,29 @@ model Budget {
 
   @@index([serviceId])
   @@index([status])
+}
+
+model ProfessionCategory {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  slug      String   @unique // construction, maintenance, etc.
+  icon      String?  // Nome do ícone
+  color     String?  // Cor hexadecimal
+  imageUrl  String?  // URL da imagem da categoria
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  professions Profession[]
+}
+
+model Profession {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  imageUrl  String?  // URL da imagem da profissão
+  category  ProfessionCategory? @relation(fields: [categoryId], references: [id])
+  categoryId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  professionals ProfessionalProfile[]
 }

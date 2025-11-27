@@ -11,6 +11,11 @@ import categoriesRouter from '@server/routes/categories';
 import bookingsRouter from '@server/routes/bookings';
 import chatRouter from '@server/routes/chat';
 import budgetRouter from '@server/routes/budget';
+import adminRouter from '@server/routes/admin';
+import adminProfessionCategoriesRouter from '@server/routes/admin-profession-categories';
+import adminProfessionsRouter from '@server/routes/admin-professions';
+import professionsRouter from '@server/routes/professions';
+import professionCategoriesRouter from '@server/routes/profession-categories';
 import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
 
@@ -33,12 +38,17 @@ app.get('/', (_req, res) => {
 
 app.use('/auth', authRouter);
 app.use('/professionals', professionalsRouter);
+app.use('/professions', professionsRouter);
+app.use('/profession-categories', professionCategoriesRouter);
 app.use('/services', servicesRouter);
 app.use('/reviews', reviewsRouter);
 app.use('/categories', categoriesRouter);
 app.use('/bookings', bookingsRouter);
 app.use('/api', chatRouter);
 app.use('/api', budgetRouter);
+app.use('/admin', adminRouter);
+app.use('/admin/profession-categories', adminProfessionCategoriesRouter);
+app.use('/admin/professions', adminProfessionsRouter);
 
 const PORT = process.env.PORT || 3333;
 httpServer.listen(PORT, () => {
