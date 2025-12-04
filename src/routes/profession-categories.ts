@@ -9,10 +9,10 @@ router.get('/', async (_req, res) => {
     const categories = await prisma.professionCategory.findMany({
       include: {
         professions: {
-          orderBy: { name: 'asc' },
+          orderBy: [{ orderIndex: 'asc' }, { name: 'asc' }],
         },
       },
-      orderBy: { name: 'asc' },
+      orderBy: [{ orderIndex: 'asc' }, { name: 'asc' }],
     });
     return res.json(categories);
   } catch (e) {
@@ -28,7 +28,7 @@ router.get('/:slug/professions', async (req, res) => {
       where: { slug: req.params.slug },
       include: {
         professions: {
-          orderBy: { name: 'asc' },
+          orderBy: [{ orderIndex: 'asc' }, { name: 'asc' }],
         },
       },
     });

@@ -79,10 +79,19 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Obter o maior orderIndex para profissões da mesma categoria e adicionar 1
+    const maxOrder = await prisma.profession.findFirst({
+      where: { categoryId: categoryId || null },
+      orderBy: { orderIndex: 'desc' },
+      select: { orderIndex: true },
+    });
+    const orderIndex = (maxOrder?.orderIndex ?? -1) + 1;
+
     const profession = await prisma.profession.create({
       data: {
         name,
         categoryId: categoryId || null,
+        orderIndex,
       },
       include: {
         category: true,
@@ -99,6 +108,67 @@ router.post('/', async (req, res) => {
   } catch (error) {
     console.error('Erro ao criar profissão:', error);
     return res.status(500).json({ message: 'Erro ao criar profissão' });
+  }
+});
+
+// PUT /admin/professions/reorder - Reordenar profissões (DEVE VIR ANTES DE /:id)
+router.put('/reorder', async (req, res) => {
+  try {
+    const { items } = req.body as { items: Array<{ id: string; orderIndex: number }> };
+
+    console.log('Recebendo reordenação de profissões:', items);
+
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ message: 'Items deve ser um array' });
+    }
+
+    if (items.length === 0) {
+      return res.status(400).json({ message: 'Items não pode estar vazio' });
+    }
+
+    // Verificar se todos os IDs existem
+    const ids = items.map(item => item.id);
+    const existingProfessions = await prisma.profession.findMany({
+      where: { id: { in: ids } },
+      select: { id: true },
+    });
+
+    console.log('IDs encontrados:', existingProfessions.map(p => p.id));
+    console.log('IDs esperados:', ids);
+
+    if (existingProfessions.length !== items.length) {
+      const missingIds = ids.filter(id => !existingProfessions.find(p => p.id === id));
+      return res.status(400).json({ 
+        message: `Profissões não encontradas: ${missingIds.join(', ')}` 
+      });
+    }
+
+    // Atualizar ordem de todas as profissões em uma transação
+    const updates = await Promise.all(
+      items.map((item) =>
+        prisma.profession.update({
+          where: { id: item.id },
+          data: { orderIndex: item.orderIndex },
+          select: { id: true, orderIndex: true },
+        })
+      )
+    );
+
+    console.log('Profissões atualizadas:', updates.map(p => ({ id: p.id, orderIndex: p.orderIndex })));
+
+    // Retornar os dados atualizados ordenados
+    const sortedUpdates = updates.sort((a, b) => a.orderIndex - b.orderIndex);
+
+    return res.json({ 
+      message: 'Ordem atualizada com sucesso',
+      professions: sortedUpdates 
+    });
+  } catch (error: any) {
+    console.error('Erro ao reordenar profissões:', error);
+    return res.status(500).json({ 
+      message: 'Erro ao reordenar profissões',
+      error: error.message 
+    });
   }
 });
 
@@ -134,6 +204,7 @@ router.put('/:id', async (req, res) => {
       data: {
         ...(name && { name }),
         ...(categoryId !== undefined && { categoryId: categoryId || null }),
+        ...(req.body.orderIndex !== undefined && { orderIndex: req.body.orderIndex }),
       },
       include: {
         category: true,

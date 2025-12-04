@@ -61,6 +61,8 @@ router.get('/', async (_req, res) => {
       description: s.description,
       pricingType: s.pricingType,
       price: s.price ? Number(s.price) : null,
+      isOnline: s.isOnline,
+      isPresential: s.isPresential,
       images: s.images.map((i) => i.url),
     })),
   );
@@ -87,6 +89,8 @@ router.get('/mine', requireAuth, async (req: AuthenticatedRequest, res) => {
       description: s.description,
       pricingType: s.pricingType,
       price: s.price ? Number(s.price) : null,
+      isOnline: s.isOnline,
+      isPresential: s.isPresential,
       images: s.images.map((i) => i.url),
     })),
   );
@@ -95,13 +99,15 @@ router.get('/mine', requireAuth, async (req: AuthenticatedRequest, res) => {
 router.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     if (req.user?.role !== 'PRO') return res.status(403).json({ message: 'Somente profissionais podem criar serviços' });
-    const { title, description, pricingType, price, categoryId, images } = req.body as {
+    const { title, description, pricingType, price, categoryId, images, isOnline, isPresential } = req.body as {
       title?: string;
       description?: string;
       pricingType?: 'FIXED' | 'HOURLY' | 'BUDGET';
       price?: number;
       categoryId?: string;
       images?: string[];
+      isOnline?: boolean;
+      isPresential?: boolean;
     };
 
     if (!title || !description) return res.status(400).json({ message: 'Título e descrição são obrigatórios' });
@@ -120,6 +126,8 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
         pricingType: (pricingType as any) ?? 'BUDGET',
         price: price ?? null,
         categoryId: categoryId ?? null,
+        isOnline: isOnline ?? false,
+        isPresential: isPresential ?? false,
         images: images && images.length ? { create: images.map((url) => ({ url })) } : undefined,
       },
       include: { images: true, category: true },
@@ -132,6 +140,8 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
       category: created.category?.name ?? '',
       description: created.description,
       price: created.price ? Number(created.price) : null,
+      isOnline: created.isOnline,
+      isPresential: created.isPresential,
       images: created.images.map((i) => i.url),
     });
   } catch (e) {
@@ -154,6 +164,8 @@ router.get('/:id', async (req, res) => {
     description: s.description,
     pricingType: s.pricingType,
     price: s.price ? Number(s.price) : null,
+    isOnline: s.isOnline,
+    isPresential: s.isPresential,
     images: s.images.map((i) => i.url),
   });
 });
@@ -206,12 +218,14 @@ router.put('/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
     }
 
     const serviceId = req.params.id;
-    const { title, description, pricingType, price, categoryId } = req.body as {
+    const { title, description, pricingType, price, categoryId, isOnline, isPresential } = req.body as {
       title?: string;
       description?: string;
       pricingType?: 'FIXED' | 'HOURLY' | 'BUDGET';
       price?: number | null;
       categoryId?: string | null;
+      isOnline?: boolean;
+      isPresential?: boolean;
     };
 
     if (!title || !description) {
@@ -244,6 +258,8 @@ router.put('/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
         pricingType: pricingType ?? 'BUDGET',
         price: price ?? null,
         categoryId: categoryId ?? null,
+        isOnline: isOnline !== undefined ? isOnline : service.isOnline,
+        isPresential: isPresential !== undefined ? isPresential : service.isPresential,
       },
       include: { images: true, category: true },
     });
@@ -256,6 +272,8 @@ router.put('/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
       description: updated.description,
       pricingType: updated.pricingType,
       price: updated.price ? Number(updated.price) : null,
+      isOnline: updated.isOnline,
+      isPresential: updated.isPresential,
       images: updated.images.map((i) => i.url),
     });
   } catch (e) {

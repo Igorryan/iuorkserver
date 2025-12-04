@@ -93,6 +93,8 @@ model Service {
   description    String
   pricingType    PricingType         @default(BUDGET)
   price          Decimal?            @db.Decimal(10, 2)
+  isOnline       Boolean             @default(false)
+  isPresential   Boolean             @default(false)
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
 
@@ -217,6 +219,7 @@ model ProfessionCategory {
   icon      String?  // Nome do ícone
   color     String?  // Cor hexadecimal
   imageUrl  String?  // URL da imagem da categoria
+  orderIndex Int     @default(0) // Ordem de exibição
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -229,6 +232,7 @@ model Profession {
   imageUrl  String?  // URL da imagem da profissão
   category  ProfessionCategory? @relation(fields: [categoryId], references: [id])
   categoryId String?
+  orderIndex Int     @default(0) // Ordem de exibição dentro da categoria
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

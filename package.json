@@ -9,7 +9,10 @@
     "start": "node dist/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "ts-node-dev prisma/seed.ts"
+    "prisma:seed": "ts-node-dev prisma/seed.ts",
+    "prisma:seed:professions": "ts-node-dev prisma/seed-professions.ts",
+    "prisma:seed:professionals": "ts-node-dev prisma/seed-professionals.ts",
+    "prisma:seed:hairdressers-bh": "ts-node-dev prisma/seed-hairdressers-bh.ts"
   },
   "keywords": [],
   "author": "",

@@ -37,16 +37,27 @@ function generateSlug(name: string): string {
 }
 
 // GET /admin/profession-categories - Listar todas as categorias de profissão
-router.get('/', async (_req, res) => {
+router.get('/', async (req, res) => {
   try {
+    const includeProfessions = req.query.includeProfessions === 'true';
+    
     const categories = await prisma.professionCategory.findMany({
       include: {
-        professions: {
-          select: { id: true },
-        },
+        professions: includeProfessions
+          ? {
+              orderBy: [{ orderIndex: 'asc' }, { name: 'asc' }],
+            }
+          : {
+              select: { id: true },
+            },
       },
-      orderBy: { name: 'asc' },
+      orderBy: [{ orderIndex: 'asc' }, { name: 'asc' }],
     });
+    
+    if (includeProfessions) {
+      return res.json(categories);
+    }
+    
     return res.json(categories.map((c) => ({
       id: c.id,
       name: c.name,
@@ -54,6 +65,7 @@ router.get('/', async (_req, res) => {
       icon: c.icon,
       color: c.color,
       imageUrl: c.imageUrl,
+      orderIndex: c.orderIndex,
       professionsCount: c.professions.length,
       createdAt: c.createdAt,
       updatedAt: c.updatedAt,
@@ -87,12 +99,20 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ message: 'Já existe uma categoria com esse slug' });
     }
 
+    // Obter o maior orderIndex e adicionar 1
+    const maxOrder = await prisma.professionCategory.findFirst({
+      orderBy: { orderIndex: 'desc' },
+      select: { orderIndex: true },
+    });
+    const orderIndex = (maxOrder?.orderIndex ?? -1) + 1;
+
     const category = await prisma.professionCategory.create({
       data: {
         name,
         slug,
         icon: icon || null,
         color: color || null,
+        orderIndex,
       },
     });
 
@@ -107,6 +127,67 @@ router.post('/', async (req, res) => {
   } catch (error) {
     console.error('Erro ao criar categoria de profissão:', error);
     return res.status(500).json({ message: 'Erro ao criar categoria de profissão' });
+  }
+});
+
+// PUT /admin/profession-categories/reorder - Reordenar categorias (DEVE VIR ANTES DE /:id)
+router.put('/reorder', async (req, res) => {
+  try {
+    const { items } = req.body as { items: Array<{ id: string; orderIndex: number }> };
+
+    console.log('Recebendo reordenação de categorias:', items);
+
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ message: 'Items deve ser um array' });
+    }
+
+    if (items.length === 0) {
+      return res.status(400).json({ message: 'Items não pode estar vazio' });
+    }
+
+    // Verificar se todos os IDs existem
+    const ids = items.map(item => item.id);
+    const existingCategories = await prisma.professionCategory.findMany({
+      where: { id: { in: ids } },
+      select: { id: true },
+    });
+
+    console.log('IDs encontrados:', existingCategories.map(c => c.id));
+    console.log('IDs esperados:', ids);
+
+    if (existingCategories.length !== items.length) {
+      const missingIds = ids.filter(id => !existingCategories.find(c => c.id === id));
+      return res.status(400).json({ 
+        message: `Categorias não encontradas: ${missingIds.join(', ')}` 
+      });
+    }
+
+    // Atualizar ordem de todas as categorias em uma transação
+    const updates = await Promise.all(
+      items.map((item) =>
+        prisma.professionCategory.update({
+          where: { id: item.id },
+          data: { orderIndex: item.orderIndex },
+          select: { id: true, orderIndex: true },
+        })
+      )
+    );
+
+    console.log('Categorias atualizadas:', updates.map(c => ({ id: c.id, orderIndex: c.orderIndex })));
+
+    // Retornar os dados atualizados ordenados
+    const sortedUpdates = updates.sort((a, b) => a.orderIndex - b.orderIndex);
+
+    return res.json({ 
+      message: 'Ordem atualizada com sucesso',
+      categories: sortedUpdates 
+    });
+  } catch (error: any) {
+    console.error('Erro ao reordenar categorias:', error);
+    return res.status(500).json({ 
+      message: 'Erro ao reordenar categorias',
+      error: error.message 
+    });
   }
 });
 
@@ -145,6 +226,7 @@ router.put('/:id', async (req, res) => {
         ...(name && { name, slug }),
         ...(icon !== undefined && { icon: icon || null }),
         ...(color !== undefined && { color: color || null }),
+        ...(req.body.orderIndex !== undefined && { orderIndex: req.body.orderIndex }),
       },
     });
 

@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { Router } from 'express';
 import jwt from 'jsonwebtoken';
 import { prisma } from '@server/index';
+import { Prisma } from '@prisma/client';
 import multer from 'multer';
 import sharp from 'sharp';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -47,46 +48,291 @@ async function uploadAvatarToS3(buffer: Buffer, mimeType: string): Promise<strin
   return `${baseUrl}/${key}`;
 }
 
-router.get('/', async (_req, res) => {
-  const data = await prisma.professionalProfile.findMany({
-    where: {
+router.get('/', async (req, res) => {
+  try {
+    const { 
+      keyword,           // Palavra-chave da busca
+      clientLat,         // Latitude do cliente
+      clientLng,         // Longitude do cliente
+    } = req.query;
+
+    console.log('GET /professionals - Query params:', { keyword, clientLat, clientLng });
+
+    // Normalizar keyword para string
+    const keywordStr = typeof keyword === 'string' ? keyword : Array.isArray(keyword) ? String(keyword[0]) : undefined;
+
+    // Construir query base
+    let whereClause: any = {
       latitude: { not: null },
       longitude: { not: null },
-    },
-    include: {
-      user: true,
-      services: {
-        include: { images: true, category: true },
-      },
-      categories: true,
-      profession: true,
-    },
-  });
-  const response = data.map((p) => ({
-    id: p.id,
-    userId: p.userId, // ✅ ID do User (para chat)
-    image: p.user.avatarUrl ?? '',
-    coverImage: p.coverUrl ?? '',
-    name: p.user.name,
-    profession: p.profession?.name ?? 'Profissional',
-    description: p.bio ?? '',
-    address: p.latitude != null && p.longitude != null
-      ? {
-          latitude: Number(p.latitude),
-          longitude: Number(p.longitude),
-          street: p.street ?? '',
-          number: Number(p.number ?? 0),
-          district: p.district ?? '',
-          city: p.city ?? '',
-          state: p.state ?? '',
-          postalcode: p.postalcode ?? '',
-          distanceInMeters: null,
+    };
+
+    // Se tem palavra-chave, filtrar por profissão ou nome
+    if (keywordStr && keywordStr.trim().length > 0) {
+      const keywordLower = keywordStr.toLowerCase().trim();
+      whereClause.OR = [
+        { profession: { name: { contains: keywordLower, mode: 'insensitive' } } },
+        { user: { name: { contains: keywordLower, mode: 'insensitive' } } },
+      ];
+    }
+
+    // Flag para controlar se deve usar fallback
+    let useFallback = true;
+    
+    // Se tem coordenadas do cliente, filtrar diretamente no banco com PostGIS
+    if (clientLat && clientLng) {
+      const clientLatNum = parseFloat(clientLat as string);
+      const clientLngNum = parseFloat(clientLng as string);
+      
+      if (!isNaN(clientLatNum) && !isNaN(clientLngNum)) {
+        try {
+          useFallback = false; // Tentar usar query SQL
+          // Construir condições SQL dinamicamente
+          let keywordCondition = '';
+          const params: any[] = [clientLngNum, clientLatNum];
+          
+          if (keywordStr && keywordStr.trim().length > 0) {
+            const keywordPattern = `%${keywordStr.toLowerCase().trim()}%`;
+            keywordCondition = `AND (
+              EXISTS(SELECT 1 FROM "Profession" pr WHERE pr.id = pp."professionId" AND LOWER(pr.name) LIKE $${params.length + 1})
+              OR EXISTS(SELECT 1 FROM "User" u WHERE u.id = pp."userId" AND LOWER(u.name) LIKE $${params.length + 1})
+            )`;
+            params.push(keywordPattern);
+          }
+
+          // Executar query e obter IDs dos profissionais filtrados
+          // Lógica: Profissional aparece se:
+          // 1. Tem serviços online (sempre aparece)
+          // 2. OU está dentro do raio de atendimento (para serviços presenciais)
+          // Usando fórmula Haversine para calcular distância (não requer PostGIS)
+          const sql = `
+            SELECT 
+              pp.id,
+              pp."radiusKm" as radius_km,
+              (
+                6371 * acos(
+                  cos(radians($2)) * 
+                  cos(radians(CAST(pp.latitude AS float))) * 
+                  cos(radians(CAST(pp.longitude AS float)) - radians($1)) + 
+                  sin(radians($2)) * 
+                  sin(radians(CAST(pp.latitude AS float)))
+                )
+              ) as distance_km,
+              EXISTS(
+                SELECT 1 FROM "Service" s 
+                WHERE s."professionalId" = pp.id AND s."isOnline" = true
+              ) as has_online_services
+            FROM "ProfessionalProfile" pp
+            WHERE pp.latitude IS NOT NULL 
+              AND pp.longitude IS NOT NULL
+              ${keywordCondition}
+              AND (
+                EXISTS(SELECT 1 FROM "Service" s WHERE s."professionalId" = pp.id AND s."isOnline" = true)
+                OR (
+                  (
+                    6371 * acos(
+                      cos(radians($2)) * 
+                      cos(radians(CAST(pp.latitude AS float))) * 
+                      cos(radians(CAST(pp.longitude AS float)) - radians($1)) + 
+                      sin(radians($2)) * 
+                      sin(radians(CAST(pp.latitude AS float)))
+                    )
+                  ) <= CAST(pp."radiusKm" AS float)
+                )
+              )
+          `;
+
+          console.log('Query SQL:', sql);
+          console.log('Parâmetros:', params);
+          console.log('Cliente coordenadas:', { lat: clientLatNum, lng: clientLngNum });
+
+          const professionalsWithRadius = await prisma.$queryRawUnsafe<Array<{
+            id: string;
+            radius_km: number;
+            distance_km: number;
+            has_online_services: boolean;
+          }>>(sql, ...params);
+
+          console.log('Profissionais encontrados:', professionalsWithRadius.map(p => ({
+            id: p.id,
+            radius_km: p.radius_km,
+            distance_km: p.distance_km.toFixed(2),
+            has_online: p.has_online_services,
+            dentro_raio: p.distance_km <= p.radius_km
+          })));
+
+          const filteredIds = professionalsWithRadius.map(p => p.id);
+
+          // Buscar profissionais completos apenas dos IDs filtrados
+          const data = await prisma.professionalProfile.findMany({
+            where: {
+              id: { in: filteredIds },
+            },
+            include: {
+              user: true,
+              services: {
+                include: { images: true, category: true },
+              },
+              categories: true,
+              profession: true,
+            },
+          });
+
+          // Mapear resposta
+          const response = data.map((p) => {
+            const hasOnlineServices = p.services.some(s => s.isOnline);
+            const hasPresentialServices = p.services.some(s => s.isPresential);
+            const radiusInfo = professionalsWithRadius.find(r => r.id === p.id);
+            
+            return {
+              id: p.id,
+              userId: p.userId,
+              image: p.user.avatarUrl ?? '',
+              coverImage: p.coverUrl ?? '',
+              name: p.user.name,
+              profession: p.profession?.name ?? 'Profissional',
+              description: p.bio ?? '',
+              radiusKm: p.radiusKm || 5,
+              address: p.latitude != null && p.longitude != null
+                ? {
+                    latitude: Number(p.latitude),
+                    longitude: Number(p.longitude),
+                    street: p.street ?? '',
+                    number: Number(p.number ?? 0),
+                    district: p.district ?? '',
+                    city: p.city ?? '',
+                    state: p.state ?? '',
+                    postalcode: p.postalcode ?? '',
+                    distanceInMeters: radiusInfo ? Math.round(radiusInfo.distance_km * 1000) : null,
+                  }
+                : null,
+              completedServicesCount: 0,
+              ratingsAggregate: { avg: 0, count: 0 },
+              hasOnlineServices,
+              hasPresentialServices,
+            };
+          });
+          
+          return res.json(response);
+        } catch (sqlError: any) {
+          console.error('Erro na query PostGIS:', sqlError);
+          // Se falhar, fazer fallback para método sem filtro de raio
+          console.warn('Fazendo fallback para método sem filtro de raio devido a erro na query SQL');
+          useFallback = true; // Usar fallback
         }
-      : null,
-    completedServicesCount: 0,
-    ratingsAggregate: { avg: 0, count: 0 },
-  }));
+      } else {
+        // Se coordenadas são inválidas, fazer fallback
+        console.warn('Coordenadas do cliente inválidas, fazendo fallback:', { clientLat, clientLng });
+        useFallback = true;
+      }
+    }
+    
+    // Fallback: Se não tem coordenadas válidas ou query SQL falhou
+    if (useFallback) {
+      // Se não tem coordenadas do cliente, retornar todos os profissionais (fallback)
+      // Em produção, isso não deveria acontecer, mas mantemos como fallback seguro
+      console.warn('GET /professionals chamado sem coordenadas do cliente - retornando todos os profissionais (fallback)');
+      const data = await prisma.professionalProfile.findMany({
+        where: whereClause,
+        include: {
+          user: true,
+          services: {
+            include: { images: true, category: true },
+          },
+          categories: true,
+          profession: true,
+        },
+      });
+
+      const response = data.map((p) => {
+        const hasOnlineServices = p.services.some(s => s.isOnline);
+        const hasPresentialServices = p.services.some(s => s.isPresential);
+        
+        return {
+          id: p.id,
+          userId: p.userId,
+          image: p.user.avatarUrl ?? '',
+          coverImage: p.coverUrl ?? '',
+          name: p.user.name,
+          profession: p.profession?.name ?? 'Profissional',
+          description: p.bio ?? '',
+          radiusKm: p.radiusKm || 5,
+          address: p.latitude != null && p.longitude != null
+            ? {
+                latitude: Number(p.latitude),
+                longitude: Number(p.longitude),
+                street: p.street ?? '',
+                number: Number(p.number ?? 0),
+                district: p.district ?? '',
+                city: p.city ?? '',
+                state: p.state ?? '',
+                postalcode: p.postalcode ?? '',
+                distanceInMeters: null,
+              }
+            : null,
+          completedServicesCount: 0,
+          ratingsAggregate: { avg: 0, count: 0 },
+          hasOnlineServices,
+          hasPresentialServices,
+        };
+      });
+      
+      return res.json(response);
+    }
+
+    // Este código não deve ser alcançado se tudo estiver correto
+    // Mas mantido como fallback de segurança
+    const data = await prisma.professionalProfile.findMany({
+      where: whereClause,
+      include: {
+        user: true,
+        services: {
+          include: { images: true, category: true },
+        },
+        categories: true,
+        profession: true,
+      },
+    });
+
+    // Mapear resposta
+    const response = data.map((p) => {
+    const hasOnlineServices = p.services.some(s => s.isOnline);
+    const hasPresentialServices = p.services.some(s => s.isPresential);
+    
+    return {
+      id: p.id,
+      userId: p.userId,
+      image: p.user.avatarUrl ?? '',
+      coverImage: p.coverUrl ?? '',
+      name: p.user.name,
+      profession: p.profession?.name ?? 'Profissional',
+      description: p.bio ?? '',
+      radiusKm: p.radiusKm || 5,
+      address: p.latitude != null && p.longitude != null
+        ? {
+            latitude: Number(p.latitude),
+            longitude: Number(p.longitude),
+            street: p.street ?? '',
+            number: Number(p.number ?? 0),
+            district: p.district ?? '',
+            city: p.city ?? '',
+            state: p.state ?? '',
+            postalcode: p.postalcode ?? '',
+            distanceInMeters: null,
+          }
+        : null,
+      completedServicesCount: 0,
+      ratingsAggregate: { avg: 0, count: 0 },
+      hasOnlineServices,
+      hasPresentialServices,
+    };
+  });
+  
   return res.json(response);
+  } catch (e: any) {
+    console.error('Erro ao buscar profissionais:', e);
+    return res.status(500).json({ message: 'Erro interno do servidor', error: e?.message });
+  }
 });
 
 // Busca dados do perfil do profissional autenticado
@@ -109,6 +355,7 @@ router.get('/me', requireAuth, async (req: AuthenticatedRequest, res) => {
         avatarUrl: newProfile.user.avatarUrl || null,
         coverUrl: newProfile.coverUrl || null,
         professionId: newProfile.professionId || null,
+        radiusKm: newProfile.radiusKm || 5,
       });
     }
     return res.json({
@@ -117,6 +364,7 @@ router.get('/me', requireAuth, async (req: AuthenticatedRequest, res) => {
       avatarUrl: proProfile.user.avatarUrl || null,
       coverUrl: proProfile.coverUrl || null,
       professionId: proProfile.professionId || null,
+      radiusKm: proProfile.radiusKm || 5,
     });
   } catch (e) {
     console.error(e);
@@ -142,6 +390,34 @@ router.put('/me/profile', requireAuth, async (req: AuthenticatedRequest, res) =>
       id: updated.id, 
       bio: updated.bio,
       profession: updated.profession?.name || null,
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ message: 'Erro interno do servidor' });
+  }
+});
+
+// Atualiza raio de atendimento do profissional autenticado
+router.put('/me/radius', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.user?.role !== 'PRO') return res.status(403).json({ message: 'Somente profissionais' });
+    const { radiusKm } = req.body as { radiusKm?: number };
+    if (radiusKm === undefined || radiusKm < 1 || radiusKm > 100) {
+      return res.status(400).json({ message: 'Raio deve estar entre 1 e 100 km' });
+    }
+    const proProfile = await prisma.professionalProfile.upsert({ 
+      where: { userId: req.user.id }, 
+      update: {}, 
+      create: { userId: req.user.id } 
+    });
+    const updated = await prisma.professionalProfile.update({ 
+      where: { id: proProfile.id }, 
+      data: { radiusKm }, 
+      include: { user: true, profession: true } 
+    });
+    return res.json({ 
+      id: updated.id, 
+      radiusKm: updated.radiusKm,
     });
   } catch (e) {
     console.error(e);
@@ -333,9 +609,11 @@ router.put('/:id/address', async (req, res) => {
 router.get('/:id', async (req, res) => {
   const p = await prisma.professionalProfile.findUnique({
     where: { id: req.params.id },
-    include: { user: true, profession: true },
+    include: { user: true, profession: true, services: true },
   });
   if (!p) return res.status(404).json({ message: 'Professional not found' });
+  const hasOnlineServices = p.services.some(s => s.isOnline);
+  const hasPresentialServices = p.services.some(s => s.isPresential);
   const response = {
     id: p.id,
     userId: p.userId, // ✅ ID do User (para chat)
@@ -344,19 +622,24 @@ router.get('/:id', async (req, res) => {
     name: p.user.name,
     profession: p.profession?.name ?? 'Profissional',
     description: p.bio ?? '',
-    address: {
-      latitude: Number(p.latitude ?? 0),
-      longitude: Number(p.longitude ?? 0),
-      street: p.street ?? '',
-      number: Number(p.number ?? 0),
-      district: p.district ?? '',
-      city: p.city ?? '',
-      state: p.state ?? '',
-      postalcode: p.postalcode ?? '',
-      distanceInMeters: null,
-    },
+    radiusKm: p.radiusKm || 5,
+    address: p.latitude != null && p.longitude != null
+      ? {
+          latitude: Number(p.latitude),
+          longitude: Number(p.longitude),
+          street: p.street ?? '',
+          number: Number(p.number ?? 0),
+          district: p.district ?? '',
+          city: p.city ?? '',
+          state: p.state ?? '',
+          postalcode: p.postalcode ?? '',
+          distanceInMeters: null,
+        }
+      : null,
     completedServicesCount: 0,
     ratingsAggregate: { avg: 0, count: 0 },
+    hasOnlineServices,
+    hasPresentialServices,
   };
   return res.json(response);
 });
@@ -375,6 +658,8 @@ router.get('/:id/services', async (req, res) => {
       description: s.description,
       pricingType: s.pricingType,
       price: s.price ? Number(s.price) : null,
+      isOnline: s.isOnline,
+      isPresential: s.isPresential,
       images: s.images.map((i) => i.url),
     })),
   );

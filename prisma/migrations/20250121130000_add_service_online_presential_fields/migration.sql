@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "Service" ADD COLUMN "isOnline" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Service" ADD COLUMN "isPresential" BOOLEAN NOT NULL DEFAULT false;
+
