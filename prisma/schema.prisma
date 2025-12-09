@@ -66,11 +66,13 @@ model ProfessionalProfile {
   postalcode String?
   profession Profession? @relation(fields: [professionId], references: [id])
   professionId String?
+  isOnline   Boolean  @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   services   Service[]
   categories Category[] @relation("ProfessionalCategories")
+  availabilities Availability[]
 }
 
 model Category {
@@ -237,4 +239,33 @@ model Profession {
   updatedAt DateTime @updatedAt
 
   professionals ProfessionalProfile[]
+}
+
+model Availability {
+  id             String              @id @default(uuid())
+  professional   ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  professionalId String
+  
+  // Tipo de disponibilidade: WEEKLY (recorrente por dia da semana) ou SPECIFIC (data específica)
+  type           String              @default("WEEKLY") // "WEEKLY" ou "SPECIFIC"
+  
+  // Para tipo WEEKLY: 0 (domingo) a 6 (sábado)
+  // Para tipo SPECIFIC: data específica
+  dayOfWeek      Int?                // 0-6 para WEEKLY
+  specificDate   DateTime?           // Para SPECIFIC
+  
+  // Horários de disponibilidade (formato HH:mm)
+  startTime      String              // Ex: "09:00"
+  endTime        String              // Ex: "18:00"
+  
+  // Se está ativo
+  isActive       Boolean             @default(true)
+  
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([professionalId])
+  @@index([dayOfWeek])
+  @@index([specificDate])
+  @@index([isActive])
 }

@@ -54,9 +54,10 @@ router.get('/', async (req, res) => {
       keyword,           // Palavra-chave da busca
       clientLat,         // Latitude do cliente
       clientLng,         // Longitude do cliente
+      date,              // Data desejada (formato ISO: YYYY-MM-DD)
     } = req.query;
 
-    console.log('GET /professionals - Query params:', { keyword, clientLat, clientLng });
+    // Removido log de debug para reduzir poluição no console
 
     // Normalizar keyword para string
     const keywordStr = typeof keyword === 'string' ? keyword : Array.isArray(keyword) ? String(keyword[0]) : undefined;
@@ -100,10 +101,54 @@ router.get('/', async (req, res) => {
             params.push(keywordPattern);
           }
 
+          // Construir condição de disponibilidade se data fornecida
+          let availabilityCondition = '';
+          let searchDate: Date | null = null;
+          
+          // Sempre filtrar por profissionais online
+          let onlineCondition = `AND pp."isOnline" = true`;
+          
+          if (date && typeof date === 'string') {
+            try {
+              // Parse da data no formato YYYY-MM-DD diretamente para evitar problemas de timezone
+              const [year, month, day] = date.split('-').map(Number);
+              searchDate = new Date(Date.UTC(year, month - 1, day));
+              
+              if (!isNaN(searchDate.getTime())) {
+                const dayOfWeek = searchDate.getUTCDay(); // 0 = domingo, 6 = sábado
+                const dateStr = date; // Usar a data original no formato YYYY-MM-DD
+                
+                // Se data fornecida, filtrar por profissionais que:
+                // 1. Têm disponibilidade WEEKLY para o dia da semana E está ativa
+                // 2. OU têm disponibilidade SPECIFIC para a data exata E está ativa
+                // 3. OU não têm disponibilidade configurada (mostra todos online dentro do raio)
+                // A disponibilidade é opcional - se não tem, ainda aparece se estiver online
+                availabilityCondition = `AND (
+                  NOT EXISTS(SELECT 1 FROM "Availability" a WHERE a."professionalId" = pp.id AND a."isActive" = true)
+                  OR EXISTS(
+                    SELECT 1 FROM "Availability" a 
+                    WHERE a."professionalId" = pp.id 
+                      AND a."isActive" = true
+                      AND (
+                        (a.type = 'WEEKLY' AND a."dayOfWeek" = ${dayOfWeek})
+                        OR (a.type = 'SPECIFIC' AND DATE(a."specificDate") = '${dateStr}')
+                      )
+                  )
+                )`;
+              }
+            } catch (dateError) {
+              console.warn('Erro ao processar data:', dateError);
+            }
+          }
+          
+          // Combinar condições de disponibilidade e online
+          availabilityCondition = availabilityCondition + ' ' + onlineCondition;
+
           // Executar query e obter IDs dos profissionais filtrados
           // Lógica: Profissional aparece se:
           // 1. Tem serviços online (sempre aparece)
           // 2. OU está dentro do raio de atendimento (para serviços presenciais)
+          // 3. E se data fornecida, tem disponibilidade para a data
           // Usando fórmula Haversine para calcular distância (não requer PostGIS)
           const sql = `
             SELECT 
@@ -126,6 +171,7 @@ router.get('/', async (req, res) => {
             WHERE pp.latitude IS NOT NULL 
               AND pp.longitude IS NOT NULL
               ${keywordCondition}
+              ${availabilityCondition}
               AND (
                 EXISTS(SELECT 1 FROM "Service" s WHERE s."professionalId" = pp.id AND s."isOnline" = true)
                 OR (
@@ -142,24 +188,12 @@ router.get('/', async (req, res) => {
               )
           `;
 
-          console.log('Query SQL:', sql);
-          console.log('Parâmetros:', params);
-          console.log('Cliente coordenadas:', { lat: clientLatNum, lng: clientLngNum });
-
           const professionalsWithRadius = await prisma.$queryRawUnsafe<Array<{
             id: string;
             radius_km: number;
             distance_km: number;
             has_online_services: boolean;
           }>>(sql, ...params);
-
-          console.log('Profissionais encontrados:', professionalsWithRadius.map(p => ({
-            id: p.id,
-            radius_km: p.radius_km,
-            distance_km: p.distance_km.toFixed(2),
-            has_online: p.has_online_services,
-            dentro_raio: p.distance_km <= p.radius_km
-          })));
 
           const filteredIds = professionalsWithRadius.map(p => p.id);
 
@@ -232,6 +266,37 @@ router.get('/', async (req, res) => {
       // Se não tem coordenadas do cliente, retornar todos os profissionais (fallback)
       // Em produção, isso não deveria acontecer, mas mantemos como fallback seguro
       console.warn('GET /professionals chamado sem coordenadas do cliente - retornando todos os profissionais (fallback)');
+      
+      // Adicionar filtro de disponibilidade se data fornecida
+      let searchDate: Date | null = null;
+      if (date && typeof date === 'string') {
+        try {
+          searchDate = new Date(date);
+          searchDate.setHours(0, 0, 0, 0);
+          if (isNaN(searchDate.getTime())) {
+            searchDate = null;
+          }
+        } catch {
+          searchDate = null;
+        }
+      }
+      
+      // Se tem data, filtrar por disponibilidade
+      if (searchDate) {
+        const dayOfWeek = searchDate.getDay();
+        const dateStr = searchDate.toISOString().split('T')[0];
+        
+        whereClause.availabilities = {
+          some: {
+            isActive: true,
+            OR: [
+              { type: 'WEEKLY', dayOfWeek },
+              { type: 'SPECIFIC', specificDate: { gte: new Date(dateStr), lt: new Date(new Date(dateStr).getTime() + 24 * 60 * 60 * 1000) } },
+            ],
+          },
+        };
+      }
+      
       const data = await prisma.professionalProfile.findMany({
         where: whereClause,
         include: {
@@ -356,6 +421,7 @@ router.get('/me', requireAuth, async (req: AuthenticatedRequest, res) => {
         coverUrl: newProfile.coverUrl || null,
         professionId: newProfile.professionId || null,
         radiusKm: newProfile.radiusKm || 5,
+        isOnline: newProfile.isOnline || false,
       });
     }
     return res.json({
@@ -365,6 +431,7 @@ router.get('/me', requireAuth, async (req: AuthenticatedRequest, res) => {
       coverUrl: proProfile.coverUrl || null,
       professionId: proProfile.professionId || null,
       radiusKm: proProfile.radiusKm || 5,
+      isOnline: proProfile.isOnline || false,
     });
   } catch (e) {
     console.error(e);
@@ -422,6 +489,39 @@ router.put('/me/radius', requireAuth, async (req: AuthenticatedRequest, res) => 
   } catch (e) {
     console.error(e);
     return res.status(500).json({ message: 'Erro interno do servidor' });
+  }
+});
+
+// Atualiza status online do profissional autenticado
+router.put('/me/online', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.user?.role !== 'PRO') return res.status(403).json({ message: 'Somente profissionais' });
+    const { isOnline } = req.body as { isOnline?: boolean };
+    if (isOnline === undefined) {
+      return res.status(400).json({ message: 'isOnline é obrigatório' });
+    }
+    const proProfile = await prisma.professionalProfile.upsert({ 
+      where: { userId: req.user.id }, 
+      update: { isOnline: Boolean(isOnline) }, 
+      create: { userId: req.user.id, isOnline: Boolean(isOnline) } 
+    });
+    const updated = await prisma.professionalProfile.findUnique({
+      where: { id: proProfile.id },
+      include: { user: true, profession: true }
+    });
+    return res.json({ 
+      id: updated.id, 
+      isOnline: updated.isOnline,
+    });
+  } catch (e: any) {
+    console.error('Erro ao atualizar status online:', e);
+    console.error('Detalhes do erro:', e.message);
+    if (e.code) console.error('Código do erro:', e.code);
+    if (e.meta) console.error('Meta do erro:', e.meta);
+    return res.status(500).json({ 
+      message: 'Erro interno do servidor',
+      error: process.env.NODE_ENV === 'development' ? e.message : undefined
+    });
   }
 });
 
@@ -685,6 +785,250 @@ router.get('/:id/reviews', async (req, res) => {
       createdAt: r.createdAt.toISOString(),
     })),
   );
+});
+
+// ========== ENDPOINTS DE DISPONIBILIDADE ==========
+
+// GET /professionals/me/availability - Listar disponibilidades do profissional autenticado
+// IMPORTANTE: Esta rota deve vir ANTES de /:professionalId/availability para evitar conflito
+router.get('/me/availability', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.user?.role !== 'PRO') {
+      return res.status(403).json({ message: 'Somente profissionais' });
+    }
+
+    const proProfile = await prisma.professionalProfile.findUnique({
+      where: { userId: req.user.id },
+    });
+
+    if (!proProfile) {
+      return res.status(404).json({ message: 'Perfil profissional não encontrado' });
+    }
+
+    const availabilities = await prisma.availability.findMany({
+      where: { professionalId: proProfile.id },
+      orderBy: [
+        { type: 'asc' },
+        { dayOfWeek: 'asc' },
+        { specificDate: 'asc' },
+        { startTime: 'asc' },
+      ],
+    });
+
+    return res.json(availabilities);
+  } catch (e: any) {
+    console.error('Erro ao buscar disponibilidades:', e);
+    return res.status(500).json({ message: 'Erro interno do servidor', error: e?.message });
+  }
+});
+
+// GET /professionals/:professionalId/availability - Listar disponibilidades de um profissional (público)
+// IMPORTANTE: Esta rota deve vir DEPOIS de /me/availability para evitar conflito
+router.get('/:professionalId/availability', async (req, res) => {
+  try {
+    const { professionalId } = req.params;
+
+    if (!professionalId) {
+      return res.status(400).json({ message: 'professionalId é obrigatório' });
+    }
+
+    // Buscar o perfil profissional pelo userId
+    const proProfile = await prisma.professionalProfile.findUnique({
+      where: { userId: professionalId },
+    });
+
+    if (!proProfile) {
+      return res.status(404).json({ message: 'Profissional não encontrado' });
+    }
+
+    const availabilities = await prisma.availability.findMany({
+      where: { 
+        professionalId: proProfile.id,
+        isActive: true,
+      },
+      orderBy: [
+        { type: 'asc' },
+        { dayOfWeek: 'asc' },
+        { specificDate: 'asc' },
+        { startTime: 'asc' },
+      ],
+    });
+
+    return res.json(availabilities);
+  } catch (e: any) {
+    console.error('Erro ao buscar disponibilidades:', e);
+    return res.status(500).json({ message: 'Erro interno do servidor', error: e?.message });
+  }
+});
+
+// POST /professionals/me/availability - Criar disponibilidade
+router.post('/me/availability', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.user?.role !== 'PRO') {
+      return res.status(403).json({ message: 'Somente profissionais' });
+    }
+
+    const { type, dayOfWeek, specificDate, startTime, endTime, isActive } = req.body;
+
+    // Validações
+    if (!type || (type !== 'WEEKLY' && type !== 'SPECIFIC')) {
+      return res.status(400).json({ message: 'Tipo deve ser WEEKLY ou SPECIFIC' });
+    }
+
+    if (type === 'WEEKLY' && (dayOfWeek === undefined || dayOfWeek === null)) {
+      return res.status(400).json({ message: 'dayOfWeek é obrigatório para tipo WEEKLY' });
+    }
+
+    if (type === 'WEEKLY' && (dayOfWeek < 0 || dayOfWeek > 6)) {
+      return res.status(400).json({ message: 'dayOfWeek deve ser entre 0 (domingo) e 6 (sábado)' });
+    }
+
+    if (type === 'SPECIFIC' && !specificDate) {
+      return res.status(400).json({ message: 'specificDate é obrigatório para tipo SPECIFIC' });
+    }
+
+    if (!startTime || !endTime) {
+      return res.status(400).json({ message: 'startTime e endTime são obrigatórios' });
+    }
+
+    // Validar formato de hora (HH:mm)
+    const timeRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeRegex.test(startTime) || !timeRegex.test(endTime)) {
+      return res.status(400).json({ message: 'Formato de hora inválido. Use HH:mm' });
+    }
+
+    const proProfile = await prisma.professionalProfile.findUnique({
+      where: { userId: req.user.id },
+    });
+
+    if (!proProfile) {
+      return res.status(404).json({ message: 'Perfil profissional não encontrado' });
+    }
+
+    const availability = await prisma.availability.create({
+      data: {
+        professionalId: proProfile.id,
+        type,
+        dayOfWeek: type === 'WEEKLY' ? dayOfWeek : null,
+        specificDate: type === 'SPECIFIC' ? new Date(specificDate) : null,
+        startTime,
+        endTime,
+        isActive: isActive !== undefined ? isActive : true,
+      },
+    });
+
+    return res.status(201).json(availability);
+  } catch (e: any) {
+    console.error('Erro ao criar disponibilidade:', e);
+    return res.status(500).json({ message: 'Erro interno do servidor', error: e?.message });
+  }
+});
+
+// PUT /professionals/me/availability/:id - Atualizar disponibilidade
+router.put('/me/availability/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.user?.role !== 'PRO') {
+      return res.status(403).json({ message: 'Somente profissionais' });
+    }
+
+    const { id } = req.params;
+    const { type, dayOfWeek, specificDate, startTime, endTime, isActive } = req.body;
+
+    const proProfile = await prisma.professionalProfile.findUnique({
+      where: { userId: req.user.id },
+    });
+
+    if (!proProfile) {
+      return res.status(404).json({ message: 'Perfil profissional não encontrado' });
+    }
+
+    // Verificar se a disponibilidade pertence ao profissional
+    const existingAvailability = await prisma.availability.findUnique({
+      where: { id },
+    });
+
+    if (!existingAvailability) {
+      return res.status(404).json({ message: 'Disponibilidade não encontrada' });
+    }
+
+    if (existingAvailability.professionalId !== proProfile.id) {
+      return res.status(403).json({ message: 'Você não tem permissão para atualizar esta disponibilidade' });
+    }
+
+    // Validações
+    if (type && type !== 'WEEKLY' && type !== 'SPECIFIC') {
+      return res.status(400).json({ message: 'Tipo deve ser WEEKLY ou SPECIFIC' });
+    }
+
+    if (startTime || endTime) {
+      const timeRegex = /^([0-1][0-9]|2[0-3]):[0-5][0-9]$/;
+      if (startTime && !timeRegex.test(startTime)) {
+        return res.status(400).json({ message: 'Formato de startTime inválido. Use HH:mm' });
+      }
+      if (endTime && !timeRegex.test(endTime)) {
+        return res.status(400).json({ message: 'Formato de endTime inválido. Use HH:mm' });
+      }
+    }
+
+    const updateData: any = {};
+    if (type !== undefined) updateData.type = type;
+    if (dayOfWeek !== undefined) updateData.dayOfWeek = dayOfWeek;
+    if (specificDate !== undefined) updateData.specificDate = specificDate ? new Date(specificDate) : null;
+    if (startTime !== undefined) updateData.startTime = startTime;
+    if (endTime !== undefined) updateData.endTime = endTime;
+    if (isActive !== undefined) updateData.isActive = isActive;
+
+    const availability = await prisma.availability.update({
+      where: { id },
+      data: updateData,
+    });
+
+    return res.json(availability);
+  } catch (e: any) {
+    console.error('Erro ao atualizar disponibilidade:', e);
+    return res.status(500).json({ message: 'Erro interno do servidor', error: e?.message });
+  }
+});
+
+// DELETE /professionals/me/availability/:id - Deletar disponibilidade
+router.delete('/me/availability/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.user?.role !== 'PRO') {
+      return res.status(403).json({ message: 'Somente profissionais' });
+    }
+
+    const { id } = req.params;
+
+    const proProfile = await prisma.professionalProfile.findUnique({
+      where: { userId: req.user.id },
+    });
+
+    if (!proProfile) {
+      return res.status(404).json({ message: 'Perfil profissional não encontrado' });
+    }
+
+    // Verificar se a disponibilidade pertence ao profissional
+    const existingAvailability = await prisma.availability.findUnique({
+      where: { id },
+    });
+
+    if (!existingAvailability) {
+      return res.status(404).json({ message: 'Disponibilidade não encontrada' });
+    }
+
+    if (existingAvailability.professionalId !== proProfile.id) {
+      return res.status(403).json({ message: 'Você não tem permissão para deletar esta disponibilidade' });
+    }
+
+    await prisma.availability.delete({
+      where: { id },
+    });
+
+    return res.status(204).send();
+  } catch (e: any) {
+    console.error('Erro ao deletar disponibilidade:', e);
+    return res.status(500).json({ message: 'Erro interno do servidor', error: e?.message });
+  }
 });
 
 export default router;
